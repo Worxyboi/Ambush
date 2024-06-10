@@ -1,5 +1,5 @@
-local casinoCoords = vector3(945.08, 35.17, 71.83) -- Replace with the actual coordinates of the casino
-local casinoRadius = 750.0 -- Radius around the coordinates to consider as inside the casino
+local casinoCoords = vector3(925.0, 47.0, 80.0) -- Replace with the actual coordinates of the casino
+local casinoRadius = 50.0 -- Radius around the coordinates to consider as inside the casino
 
 local function IsPlayerInCasino(playerCoords)
     local distance = #(playerCoords - casinoCoords)
@@ -17,7 +17,7 @@ local merryweatherNPCs = {
 local merryweatherVehicles = {
     'crusader', -- Military jeep
     'mesa', -- Off-road vehicle used by Merryweather
-    'sandking2' -- Attack helicopter (if you want aerial attacks)
+    'sandking2' 
 }
 
 local ambushWeapons = {
@@ -28,33 +28,42 @@ local ambushWeapons = {
 }
 
 local spawnedNPCs = {}
-local escapeDistance = 20000.0 -- Distance in meters to consider as an escape
+local escapeDistance = 1500.0 -- Distance in meters to consider as an escape
 
--- Function to generate a random location within a radius around a given position
-function GenerateRandomLocationAroundPosition(posX, posY, radius)
-    local randomAngle = math.rad(math.random(0, 360)) -- Random angle in radians
-    local randomRadius = math.random() * radius -- Random radius within the specified range
-    local offsetX = randomRadius * math.cos(randomAngle)
-    local offsetY = randomRadius * math.sin(randomAngle)
-    return vector3(posX + offsetX, posY + offsetY, 0.0) -- Z-coordinate set to 0 for 2D position
+local function GenerateRandomLocationAroundPosition(x, y, radius)
+    local angle = math.random() * 2 * math.pi
+    local offsetX = math.cos(angle) * radius
+    local offsetY = math.sin(angle) * radius
+    return vector3(x + offsetX, y + offsetY, 0.0) -- Adjust Z coordinate as needed
+end
+
+local function CleanupAmbush()
+    for _, data in ipairs(spawnedNPCs) do
+        if DoesEntityExist(data.npc) then
+            DeleteEntity(data.npc)
+        end
+        if DoesEntityExist(data.vehicle) then
+            DeleteVehicle(data.vehicle)
+        end
+    end
+    spawnedNPCs = {}
 end
 
 Citizen.CreateThread(function()
     while true do
         Citizen.Wait(math.random(300000, 600000)) -- Wait for a random time between 5 and 10 minutes
-
         local playerPed = PlayerPedId()
         local playerCoords = GetEntityCoords(playerPed)
-        local spawnRadius = 200.0 -- Radius within which ambush can be triggered
-
-     if not IsPlayerInCasino(playerCoords) then
-        local spawnLocation = GenerateRandomLocationAroundPosition(playerCoords.x, playerCoords.y, spawnRadius)
-
-        TriggerEvent('npc_ambush:spawnAmbush', spawnLocation)
-        TriggerClientEvent('chatMessage', -1, '^1[AMBUSH]', {255, 0, 0}, 'An ambush has been triggered!')
-         else
+        
+        if not IsPlayerInCasino(playerCoords) then
+            local spawnLocation = GenerateRandomLocationAroundPosition(playerCoords.x, playerCoords.y, 200.0)
+            TriggerEvent('npc_ambush:spawnAmbush', spawnLocation)
+        else
             print('Player is in the casino, skipping ambush.')
         end
+
+        Citizen.Wait(180000) -- Wait for 3 minutes before cleaning up
+        CleanupAmbush()
     end
 end)
 
@@ -66,6 +75,9 @@ AddEventHandler('npc_ambush:spawnAmbush', function(location)
     end
 
     print('Ambush triggered at location: ' .. json.encode(location))
+
+    local playerPed = PlayerPedId()
+    local playerCoords = GetEntityCoords(playerPed)
 
     local spawnLocation = vector3(location.x + spawnOffset.x, location.y + spawnOffset.y, location.z + spawnOffset.z)
 
@@ -90,43 +102,41 @@ AddEventHandler('npc_ambush:spawnAmbush', function(location)
         return
     end
 
-    -- Create the driver NPC
-local driver = CreatePedInsideVehicle(vehicle, 4, model, -1, true, true)
-if not DoesEntityExist(driver) then
-    print('Failed to create driver!')
-    DeleteVehicle(vehicle)
-    return
-end
+    -- Create the relationship group
+    local relationshipGroup = 'MERRYWEATHER'
+    AddRelationshipGroup(relationshipGroup)
 
--- Give weapon and set task for the driver
-SetRelationshipBetweenGroups(5, GetHashKey('PLAYER'), GetHashKey('GANG_9')) -- Hostile behavior towards player
-GiveWeaponToPed(driver, weapon, 255, false, true)
-TaskCombatPed(driver, PlayerPedId(), 0, 16) -- Attack the player
+    -- Set relationship within group to friendly and towards player to hostile
+    SetRelationshipBetweenGroups(0, GetHashKey(relationshipGroup), GetHashKey(relationshipGroup))
+    SetRelationshipBetweenGroups(5, GetHashKey(relationshipGroup), GetHashKey('PLAYER'))
+    SetRelationshipBetweenGroups(5, GetHashKey('PLAYER'), GetHashKey(relationshipGroup))
 
--- Insert the driver NPC and vehicle into the spawnedNPCs table
-table.insert(spawnedNPCs, {npc = driver, vehicle = vehicle})
-
--- Attempt to create the passenger NPC
-local passengerSeatIndex = GetEmptySeat(vehicle)
-print('Passenger seat index: ' .. passengerSeatIndex) -- Debug output
-        
-if passengerSeatIndex ~= -1 then
-    print('Found empty passenger seat at index: ' .. passengerSeatIndex)
-    local passenger = CreatePedInsideVehicle(vehicle, 4, model, passengerSeatIndex, true, true)
-    if DoesEntityExist(passenger) then
-        -- Give weapon and set task for the passenger
-        SetRelationshipBetweenGroups(5, GetHashKey('PLAYER'), GetHashKey('GANG_9')) -- Hostile behavior towards player
-        GiveWeaponToPed(passenger, weapon, 255, false, true)
-        TaskCombatPed(passenger, PlayerPedId(), 0, 16) -- Attack the player
-        
-        -- Insert the passenger NPC and vehicle into the spawnedNPCs table
-        table.insert(spawnedNPCs, {npc = passenger, vehicle = vehicle})
-    else
-        print('Failed to create passenger!')
+    local driver = CreatePedInsideVehicle(vehicle, 4, model, -1, true, true)
+    if not DoesEntityExist(driver) then
+        print('Failed to create driver!')
+        DeleteVehicle(vehicle)
+        return
     end
-else
-    print('No empty passenger seat available!')
-end
+    SetPedRelationshipGroupHash(driver, GetHashKey(relationshipGroup))
+    GiveWeaponToPed(driver, weapon, 255, false, true)
+    TaskCombatPed(driver, PlayerPedId(), 0, 16) -- Attack the player    
+    table.insert(spawnedNPCs, {npc = driver, vehicle = vehicle})
+        
+    -- Attempt to create the passenger NPC
+    for i = 0, GetVehicleMaxNumberOfPassengers(vehicle) - 1 do
+        if IsVehicleSeatFree(vehicle, i) then
+            local passenger = CreatePedInsideVehicle(vehicle, 4, model, i, true, true)
+            if DoesEntityExist(passenger) then
+                SetPedRelationshipGroupHash(passenger, GetHashKey(relationshipGroup))
+                -- Give weapon and set task for the passenger
+                GiveWeaponToPed(passenger, weapon, 255, false, true)
+                TaskCombatPed(passenger, PlayerPedId(), 0, 16) -- Attack the player
+                table.insert(spawnedNPCs, {npc = passenger, vehicle = vehicle})
+            else
+                print('Failed to create passenger!')
+            end
+        end
+    end
 
     Citizen.CreateThread(function()
         while DoesEntityExist(driver) do
@@ -143,24 +153,17 @@ end
             end
         end
 
-        for i, entity in ipairs(spawnedNPCs) do
-            if entity.npc == driver then
-                table.remove(spawnedNPCs, i)
+        -- Check if all NPCs are dead and then delete the vehicle
+        local allDead = true
+        for _, npc in ipairs(spawnedNPCs) do
+            if DoesEntityExist(npc.npc) then
+                allDead = false
                 break
             end
         end
 
-        if #spawnedNPCs == 0 then
-            print('All NPCs dead!') -- Print message for debugging
-            TriggerServerEvent('npc_ambush:allNPCsDead')
+        if allDead then
+            DeleteVehicle(vehicle)
         end
     end)
-end)
-
-RegisterNetEvent('npc_ambush:adminTriggerAmbush')
-AddEventHandler('npc_ambush:adminTriggerAmbush', function()
-    print('Admin triggered ambush!') -- Print message for debugging
-    local playerPed = PlayerPedId()
-    local playerCoords = GetEntityCoords(playerPed)
-    TriggerServerEvent('npc_ambush:requestAmbush', playerCoords)
 end)
